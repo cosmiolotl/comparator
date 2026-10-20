@@ -4,7 +4,8 @@ Comparator is a test suite written to check conformance of Minecraft Java Editio
 
 The full suite contains **512 cases** covering most basic mechanics and block interactions. This project is currently in alpha; see [coverage and limits](docs/coverage.md).
 
-Comparator currently supports the following Minecraft versions: **1.21.1\***.
+Comparator currently supports the following Minecraft versions: **1.21.1\***
+
 \* Partial support
 
 ## Run Comparator
@@ -40,7 +41,7 @@ $env:COMPARATOR_RCON_PASSWORD = 'your-test-password' # optional
 npm run cts -- --config path/to/your/config.json --strict
 ```
 
-## Exit codes and conditions
+## Exit codes
 
 Use `--strict` in conformance CI to fail on any selected skip. Runs with no passes or no matching cases fail.
 
@@ -50,17 +51,6 @@ Use `--strict` in conformance CI to fail on any selected skip. Runs with no pass
 | 1 | Conformance failure, no executed checks, empty selection, or strict skip |
 | 2 | Invalid configuration, adapter lifecycle failure outside a case, or report error |
 | 130 | Interrupted run; cleanup and reporting were attempted |
-
-## Extend the suite
-
-The baseline present for Comparator can be run using the vanilla download installed using Java 21 or later.
-
-```powershell
-$env:COMPARATOR_JAVA = 'C:/path/to/java.exe' # Or place java in PATH
-npm run test:vanilla -- --accept-eula --repeat 2
-```
-
-By using `--accept-eula` you agree to the [Minecraft EULA](https://aka.ms/MinecraftEULA).
 
 ## Libraries
 
