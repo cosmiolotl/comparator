@@ -5,7 +5,7 @@ import { withDeadline } from './deadline.js';
 import { JavaProtocol } from './protocol/java.js';
 import { skipReason } from './suite.js';
 import type { CaseResult, ConformanceCase } from './suite.js';
-import { createWorld, releaseWorld, restoreClock } from './world/fixtures.js';
+import { connectControl, createWorld, releaseWorld, restoreClock } from './world/fixtures.js';
 import type { World } from './world/world.js';
 
 export interface RunResult {
@@ -44,16 +44,35 @@ async function runCase(
   };
   let protocol: JavaProtocol | undefined;
   let world: World | undefined;
+  const cleanups: Array<{ label: string; run(signal: AbortSignal): Promise<void> }> = [];
   try {
     await withDeadline(config.timeoutMs, test.id, async (signal) => {
       await adapter.beforeEach?.(test.id, signal);
       signal.throwIfAborted();
       protocol = new JavaProtocol(config.target, signal);
       if (test.requires.includes('world')) {
-        world = await createWorld(config, signal, arena);
+        world = await createWorld(config, signal, arena, test.placement);
         await world.initialize();
       }
-      await test.run({ config, protocol, signal, username, ...(world ? { world } : {}) });
+      const restart = async (mode: 'clean' | 'crash' = 'clean'): Promise<void> => {
+        if (!world || !test.requires.includes('restart') || !adapter.restart) {
+          throw new Error('This case requires a restart-capable adapter and world fixture');
+        }
+        if (mode === 'crash' && !test.requires.includes('crashRecovery')) {
+          throw new Error('A crash must be explicitly declared by the case');
+        }
+        await world.suspendForRestart();
+        await adapter.restart(mode, signal);
+        await world.resumeAfterRestart(await connectControl(config, signal));
+      };
+      if (test.requires.includes('restart') && !adapter.restart) {
+        throw new Error('Declared restart capability requires adapter.restart');
+      }
+      const deferCleanup = (label: string, cleanup: (cleanupSignal: AbortSignal) => Promise<void>): void => {
+        signal.throwIfAborted();
+        cleanups.push({ label, run: cleanup });
+      };
+      await test.run({ config, protocol, signal, username, restart, deferCleanup, ...(world ? { world } : {}) });
     }, parent);
   } catch (error) {
     result.status = 'failed';
@@ -61,7 +80,6 @@ async function runCase(
   } finally {
     protocol?.close();
     world?.close();
-    const cleanups: Array<{ label: string; run(signal: AbortSignal): Promise<void> }> = [];
     const completedWorld = world;
     if (completedWorld) cleanups.push({ label: 'world cleanup', run: (signal) => releaseWorld(config, completedWorld, signal) });
     cleanups.push({ label: 'adapter cleanup', run: async (signal) => { await adapter.afterEach?.(test.id, signal); } });
@@ -97,8 +115,9 @@ export async function runSuite(
   const start = performance.now();
   const cases: CaseResult[] = [];
   const errors: string[] = [];
-  const usernamePrefix = `cts_A${randomBytes(4).toString('hex')}`;
-  const firstArena = randomInt(0, 100000);
+  const runId = randomBytes(4).readUInt32BE().toString(36).padStart(7, '0');
+  const usernamePrefix = `cts_A${runId}`;
+  const firstArena = randomInt(0, 50000);
   let usedWorld = false;
   try {
     await withDeadline(config.timeoutMs, 'Adapter setup', async (setupSignal) => {

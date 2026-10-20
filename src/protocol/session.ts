@@ -15,6 +15,7 @@ export interface PacketTrace {
 interface Waiter {
   name: string;
   state: string;
+  predicate(packet: Packet): boolean;
   resolve(packet: Packet): void;
   reject(error: Error): void;
 }
@@ -23,6 +24,9 @@ export class PacketSession {
   readonly trace: PacketTrace[] = [];
   private readonly packets: Packet[] = [];
   private readonly waiters = new Set<Waiter>();
+  private readonly observers = new Set<(packet: Packet) => void>();
+  private readonly disconnectWaiters = new Set<{ resolve(packet: Packet): void; reject(error: Error): void }>();
+  private disconnectPacket: Packet | undefined;
   private failure: Error | undefined;
   private disposed = false;
 
@@ -37,6 +41,8 @@ export class PacketSession {
   private readonly onPacket = (data: unknown, metadata: PacketMeta): void => {
     if (this.disposed) return;
     this.record('received', metadata.name, metadata.state);
+    // Empty protocol packets (including bundle delimiters) decode as undefined.
+    if (data === undefined) data = {};
     if (!data || typeof data !== 'object' || Array.isArray(data)) {
       this.fail(new Error(`Invalid ${metadata.name} packet`));
       return;
@@ -47,15 +53,24 @@ export class PacketSession {
       data: data as Record<string, unknown>,
     };
     if (['disconnect', 'kick_disconnect'].includes(packet.name)) {
+      this.disconnectPacket = packet;
+      for (const waiter of this.disconnectWaiters) waiter.resolve(packet);
+      this.disconnectWaiters.clear();
       this.fail(new Error(`Server disconnected: ${JSON.stringify(packet.data.reason)}`));
       return;
     }
-    const waiter = [...this.waiters].find((entry) => {
-      return entry.name === packet.name && entry.state === packet.state;
-    });
-    if (waiter) {
-      this.waiters.delete(waiter);
-      waiter.resolve(packet);
+    try {
+      for (const observer of this.observers) observer(packet);
+      const waiter = [...this.waiters].find((entry) => {
+        return entry.name === packet.name && entry.state === packet.state && entry.predicate(packet);
+      });
+      if (waiter) {
+        this.waiters.delete(waiter);
+        waiter.resolve(packet);
+        return;
+      }
+    } catch (error) {
+      this.fail(error instanceof Error ? error : new Error(String(error)));
       return;
     }
     this.packets.push(packet);
@@ -81,16 +96,37 @@ export class PacketSession {
     this.failure ??= error;
     for (const waiter of this.waiters) waiter.reject(this.failure);
     this.waiters.clear();
+    for (const waiter of this.disconnectWaiters) waiter.reject(this.failure);
+    this.disconnectWaiters.clear();
   };
 
-  waitFor(name: string, state: string): Promise<Packet> {
+  waitFor(name: string, state: string, predicate: (packet: Packet) => boolean = () => true): Promise<Packet> {
     this.signal.throwIfAborted();
-    const index = this.packets.findIndex((packet) => packet.name === name && packet.state === state);
+    const index = this.packets.findIndex((packet) => packet.name === name && packet.state === state && predicate(packet));
     if (index >= 0) return Promise.resolve(this.packets.splice(index, 1)[0]!);
     if (this.failure) return Promise.reject(this.failure);
     return new Promise((resolve, reject) => {
-      this.waiters.add({ name, state, resolve, reject });
+      this.waiters.add({ name, state, predicate, resolve, reject });
     });
+  }
+
+  observe(observer: (packet: Packet) => void): () => void {
+    this.observers.add(observer);
+    return () => this.observers.delete(observer);
+  }
+
+  waitForDisconnect(): Promise<Packet> {
+    this.signal.throwIfAborted();
+    if (this.disconnectPacket) return Promise.resolve(this.disconnectPacket);
+    if (this.failure) return Promise.reject(this.failure);
+    return new Promise((resolve, reject) => this.disconnectWaiters.add({ resolve, reject }));
+  }
+
+  discard(name: string, state = 'play'): void {
+    for (let index = this.packets.length - 1; index >= 0; index--) {
+      const packet = this.packets[index]!;
+      if (packet.name === name && packet.state === state) this.packets.splice(index, 1);
+    }
   }
 
   write(name: string, data: Record<string, unknown>): void {
@@ -108,5 +144,6 @@ export class PacketSession {
     if (!this.client.ended) this.client.end('Comparator case finished');
     this.client.socket?.destroy();
     this.packets.length = 0;
+    this.observers.clear();
   }
 }

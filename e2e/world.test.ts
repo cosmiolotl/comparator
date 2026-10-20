@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import test from 'node:test';
 import { startControlFixture } from './control-fixture.js';
 import { createHarness } from './harness.js';
+import { cases } from '../tests/index.js';
 
 for (const options of [{}, { wrongArithmetic: true }, { missingObservation: true }]) {
   const shouldPass = Object.keys(options).length === 0;
@@ -70,26 +71,26 @@ for (const overshootTicks of [false, true]) {
   });
 }
 
-test('Catalog lists exactly 512 unique cases and exposes unavailable world coverage', async (context) => {
+test('Catalog lists every registered case once and exposes unavailable world coverage', async (context) => {
   const harness = await createHarness(context, 1);
   const listed = await harness.run('--list');
   assert.equal(listed.code, 0, listed.stderr);
   const ids = listed.stdout.split(/\r?\n/).filter((line) => line.startsWith('java.')).map((line) => line.split(' ')[0]);
-  assert.equal(ids.length, 512);
-  assert.equal(new Set(ids).size, 512);
+  assert.equal(ids.length, cases.length);
+  assert.equal(new Set(ids).size, cases.length);
   assert.match(listed.stdout, /SKIP: Undeclared capabilities: world/);
 });
 
 test('World cases are version gated and strict runs cannot count skips as passes', async (context) => {
   const harness = await createHarness(context, 1, {
     target: { edition: 'java', host: '127.0.0.1', port: 1, version: '1.20.1' },
-    capabilities: ['world'],
+    capabilities: ['status', 'login', 'play', 'world', 'restart', 'crashRecovery'],
     control: { host: '127.0.0.1', port: 1, passwordEnv: 'UNSET_COMPARATOR_PASSWORD' },
   });
   const execution = await harness.run('--profile', 'world', '--strict');
   assert.equal(execution.code, 1, execution.stdout + execution.stderr);
   const { result } = await harness.report();
-  assert.deepEqual(result.summary, { passed: 0, failed: 0, skipped: 508 });
+  assert.deepEqual(result.summary, { passed: 0, failed: 0, skipped: cases.filter((entry) => entry.requires.includes('world')).length });
   assert.match(result.cases[0]?.reason ?? '', /does not cover Java 1.20.1/);
 });
 

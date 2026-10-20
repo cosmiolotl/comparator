@@ -21,6 +21,7 @@ through the CLI's TypeScript loader. Paths resolve relative to the config file.
 | `beforeEach(caseId, signal)` | Arrange fixtures or reset the world |
 | `afterEach(caseId, signal)` | Remove fixtures after connections close |
 | `teardown(signal)` | Release resources owned by the adapter |
+| `restart(mode, signal)` | Stop/kill the owned process and reopen the same world during a persistence case |
 
 All hooks are optional. `setup` and `teardown` run once per invocation. Before/after
 hooks run only for eligible cases. `afterEach` is attempted even when `beforeEach`
@@ -82,8 +83,8 @@ TCP peers; implementor CI should run the same catalog against the actual softwar
 
 ## World control
 
-[vanilla-world.json](../implementors/vanilla-world.json) selects all 512 cases and
-declares `world`. Supply its `control.passwordEnv` environment variable and point
+[vanilla-world.json](../implementors/vanilla-world.json) declares `world` in addition
+to the basic protocol capabilities. Supply its `control.passwordEnv` environment variable and point
 both game and RCON endpoints at the same dedicated instance. The config contains
 the environment variable name, never the password. Listing does not read the
 password or connect. A missing password, rejected authentication, or unavailable
@@ -96,8 +97,37 @@ reuse the previous case's scheduled updates. Only one Comparator run may control
 an instance at a time. Do not let external players, plugins, datapacks, or adapters
 advance time or modify fixtures during a case.
 
-For world-only CI use `--profile world --strict`; for complete selected coverage
-omit the profile flag with the world config. Capabilities and release gates remain
+Use `--profile live --strict` with this configuration to run all cases that do not
+require restarting the process. `world` includes persistence cases as well, so
+it requires the additional lifecycle capabilities for a strict pass.
+Capabilities and release gates remain
 visible in JSON/JUnit. The shipped baseline launcher verifies and starts Mojang's
 1.21.1 server and stops its own process when finished; it does not stop external
-servers. See the [README](../README.md#run-the-gameplay-catalog).
+servers. See the [README](../README.md#run-comparator).
+
+## Restart and crash capabilities
+
+For an existing server with no restart adapter, use `--profile live --strict`.
+This selects all protocol and gameplay cases that do not require process control.
+`--profile persistence` selects cases declaring `restart`.
+
+Declare `restart` only with `world` and a working `restart(mode, signal)` adapter
+hook. Declare `crashRecovery` only with `restart`. A declared capability without
+its hook fails; it never silently skips or passes.
+
+The harness removes its arena tickets and completes `save-all flush` before
+calling the hook. The hook must wait for the old process to exit and the new
+process to accept RCON on the configured endpoint, using the same saved world.
+It must not replace the world, clear player data, or modify expected state.
+`clean` requests an orderly stop; `crash` requests immediate process termination
+after that acknowledged flush. Only terminate a process the adapter owns.
+
+After restart, the harness reconnects, verifies the saved observation token,
+freezes simulation, and reloads the remote arena. Process-startup ticks therefore
+do not consume the arena's scheduled delays. This profile does not test unsaved
+changes, OS crashes, power loss, storage-device faults, or durability across
+Minecraft-version upgrades.
+
+The official launcher supplies an authenticated loopback lifecycle service and
+`implementors/managed-vanilla.ts`. This adapter is for that launcher; alternative
+implementations should provide their own owned-process lifecycle hook.

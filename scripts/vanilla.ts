@@ -1,13 +1,13 @@
 import { createHash } from 'node:crypto';
 import { spawn } from 'node:child_process';
-import type { ChildProcess } from 'node:child_process';
 import { once } from 'node:events';
-import { createWriteStream } from 'node:fs';
 import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import type { AddressInfo } from 'node:net';
 import { resolve } from 'node:path';
 import { parseArgs } from 'node:util';
+import { VanillaProcess } from './vanilla-process.js';
+import { lifecycleControl } from './lifecycle-control.js';
 
 const project = resolve(import.meta.dirname, '..');
 const serverHash = '59353fb40c36d304f2035d51e7d6e6baa98dc05c';
@@ -37,47 +37,8 @@ async function downloadServer(): Promise<string> {
   return jar;
 }
 
-async function waitUntilReady(server: ChildProcess, signal: AbortSignal): Promise<void> {
-  await new Promise<void>((resolveReady, reject) => {
-    let output = '';
-    let finished = false;
-    const timer = setTimeout(() => finish(new Error('Vanilla startup timed out')), 90000);
-    const onAbort = (): void => finish(signal.reason instanceof Error ? signal.reason : new Error('Startup interrupted'));
-    const onExit = (code: number | null): void => finish(new Error(`Vanilla exited before readiness (${code})`));
-    const onData = (chunk: Buffer): void => {
-      output = (output + chunk.toString('utf8')).slice(-4096);
-      if (output.includes('Done (') && output.includes('RCON running on')) finish();
-    };
-    function finish(error?: Error): void {
-      if (finished) return;
-      finished = true;
-      clearTimeout(timer);
-      signal.removeEventListener('abort', onAbort);
-      server.removeListener('error', finish);
-      server.removeListener('exit', onExit);
-      server.stdout?.removeListener('data', onData);
-      if (error) reject(error);
-      else resolveReady();
-    }
-    server.once('error', finish);
-    server.once('exit', onExit);
-    server.stdout?.on('data', onData);
-    signal.addEventListener('abort', onAbort, { once: true });
-    if (signal.aborted) onAbort();
-  });
-}
-
-async function stopOwnedProcess(server: ChildProcess): Promise<void> {
-  if (server.exitCode !== null || server.signalCode !== null || !server.pid) return;
-  const exit = once(server, 'exit');
-  if (!server.stdin?.destroyed) server.stdin?.write('stop\n');
-  const timer = setTimeout(() => server.kill(), 10000);
-  const forceTimer = setTimeout(() => server.kill('SIGKILL'), 15000);
-  try { await exit; } finally { clearTimeout(timer); clearTimeout(forceTimer); }
-}
-
-async function runCli(config: string, filter: string | undefined, signal: AbortSignal): Promise<number> {
-  const arguments_ = ['--import', 'tsx', 'src/cli.ts', '--config', config, '--strict'];
+async function runCli(config: string, profile: string, filter: string | undefined, signal: AbortSignal): Promise<number> {
+  const arguments_ = ['--import', 'tsx', 'src/cli.ts', '--config', config, '--profile', profile, '--strict'];
   if (filter) arguments_.push('--filter', filter);
   const child = spawn(process.execPath, arguments_, { cwd: project, stdio: 'inherit', windowsHide: true });
   let forceTimer: ReturnType<typeof setTimeout> | undefined;
@@ -87,7 +48,7 @@ async function runCli(config: string, filter: string | undefined, signal: AbortS
   };
   signal.addEventListener('abort', onAbort, { once: true });
   if (signal.aborted) onAbort();
-  const timer = setTimeout(onAbort, 900000);
+  const timer = setTimeout(onAbort, 1800000);
   try {
     const [code] = await once(child, 'exit') as [number | null, string | null];
     return code ?? 1;
@@ -103,12 +64,14 @@ async function main(): Promise<void> {
     'accept-eula': { type: 'boolean', default: false },
     repeat: { type: 'string', default: '1' },
     filter: { type: 'string' },
+    profile: { type: 'string', default: 'all' },
   } });
   if (!values['accept-eula']) {
     throw new Error('Pass --accept-eula only if you agree to https://aka.ms/MinecraftEULA. No server was started.');
   }
   const repeat = Number(values.repeat);
   if (!Number.isInteger(repeat) || repeat < 1 || repeat > 10) throw new Error('--repeat must be 1 through 10');
+  if (!['all', 'live', 'protocol', 'world', 'persistence'].includes(values.profile)) throw new Error('Unknown baseline profile');
   await mkdir(resolve(project, '.local'), { recursive: true });
   const jar = await downloadServer();
   const directory = await mkdtemp(resolve(project, '.local/vanilla-run-'));
@@ -131,9 +94,10 @@ async function main(): Promise<void> {
   await writeFile(config, JSON.stringify({
     implementation: 'mojang-1.21.1',
     target: { edition: 'java', host: '127.0.0.1', port, version: '1.21.1' },
-    capabilities: ['status', 'login', 'play', 'world'],
+    capabilities: ['status', 'login', 'play', 'world', 'restart', 'crashRecovery'],
+    adapter: resolve(project, 'implementors/managed-vanilla.ts'),
     control: { host: '127.0.0.1', port: controlPort, passwordEnv: 'COMPARATOR_VANILLA_RCON_PASSWORD' },
-    timeoutMs: 30000, reportDirectory: resolve(project, 'reports/vanilla'),
+    timeoutMs: 90000, reportDirectory: resolve(project, 'reports/vanilla'),
   }, null, 2));
   await writeFile(resolve(directory, 'provenance.json'), JSON.stringify({ version: '1.21.1', serverUrl, serverHash }, null, 2));
   const previousPassword = process.env.COMPARATOR_VANILLA_RCON_PASSWORD;
@@ -142,32 +106,29 @@ async function main(): Promise<void> {
   const interrupt = (): void => controller.abort();
   process.once('SIGINT', interrupt);
   process.once('SIGTERM', interrupt);
-  const server = spawn(process.env.COMPARATOR_JAVA ?? 'java', ['-Xms256M', '-Xmx2G', '-jar', jar, 'nogui'], {
-    cwd: directory, windowsHide: true, stdio: 'pipe',
-  });
-  const log = createWriteStream(resolve(directory, 'server.log'));
-  const onStreamError = (error: Error): void => controller.abort(error);
-  log.on('error', onStreamError);
-  server.stdin?.on('error', onStreamError);
-  server.stdout?.on('error', onStreamError);
-  server.stderr?.on('error', onStreamError);
-  server.stdout?.pipe(log, { end: false });
-  server.stderr?.pipe(log, { end: false });
+  const server = new VanillaProcess(directory, jar, controller);
+  const lifecycle = await lifecycleControl(server);
+  const previousUrl = process.env.COMPARATOR_LIFECYCLE_URL;
+  const previousToken = process.env.COMPARATOR_LIFECYCLE_TOKEN;
+  process.env.COMPARATOR_LIFECYCLE_URL = lifecycle.url;
+  process.env.COMPARATOR_LIFECYCLE_TOKEN = lifecycle.token;
   console.log(`Verified vanilla 1.21.1; logs and world: ${directory}`);
   try {
-    await waitUntilReady(server, controller.signal);
-    server.once('exit', () => controller.abort(new Error('Vanilla server exited')));
+    await server.start();
     for (let iteration = 1; iteration <= repeat; iteration++) {
       controller.signal.throwIfAborted();
       console.log(`Vanilla baseline ${iteration}/${repeat}`);
-      const code = await runCli(config, values.filter, controller.signal);
+      const code = await runCli(config, values.profile, values.filter, controller.signal);
       if (code !== 0) { process.exitCode = code; break; }
     }
   } finally {
     try {
-      await stopOwnedProcess(server);
+      try { await lifecycle.close(); } finally { await server.close(); }
     } finally {
-      log.end();
+      if (previousUrl === undefined) delete process.env.COMPARATOR_LIFECYCLE_URL;
+      else process.env.COMPARATOR_LIFECYCLE_URL = previousUrl;
+      if (previousToken === undefined) delete process.env.COMPARATOR_LIFECYCLE_TOKEN;
+      else process.env.COMPARATOR_LIFECYCLE_TOKEN = previousToken;
       process.removeListener('SIGINT', interrupt);
       process.removeListener('SIGTERM', interrupt);
       if (previousPassword === undefined) delete process.env.COMPARATOR_VANILLA_RCON_PASSWORD;

@@ -1,6 +1,7 @@
 import type { SuiteConfig } from '../config.js';
 import { Rcon } from '../control/rcon.js';
 import { World } from './world.js';
+import type { WorldPlacement } from '../suite.js';
 
 export async function connectControl(config: SuiteConfig, signal: AbortSignal): Promise<Rcon> {
   if (!config.control) throw new Error('Missing RCON control configuration');
@@ -10,17 +11,21 @@ export async function connectControl(config: SuiteConfig, signal: AbortSignal): 
   return Rcon.connect(host, port, password, signal);
 }
 
-export async function createWorld(config: SuiteConfig, signal: AbortSignal, arena: number): Promise<World> {
+export async function createWorld(config: SuiteConfig, signal: AbortSignal, arena: number, placement: WorldPlacement = {}): Promise<World> {
   const connection = await connectControl(config, signal);
-  return new World(connection, { x: 1000000 + arena * 64, y: 160, z: 1000000 }, signal);
+  const sign = placement.negative ? -1 : 1;
+  return new World(connection, {
+    x: sign * (1000000 + arena * 256), y: placement.height ?? 160, z: sign * 1000000,
+  }, signal, placement.dimension);
 }
 
 export async function releaseWorld(config: SuiteConfig, world: World, signal: AbortSignal): Promise<void> {
   const connection = await connectControl(config, signal);
   const { x, y, z } = world.origin;
   try {
-    await connection.command(`execute positioned ${x}.0 ${y}.0 ${z}.0 run kill @e[type=!minecraft:player,distance=..100]`);
-    await connection.command(`execute positioned ${x}.0 ${y}.0 ${z}.0 run forceload remove ~-16 ~-16 ~31 ~31`);
+    const prefix = `execute in ${world.dimension} positioned ${x}.0 ${y}.0 ${z}.0 run`;
+    await connection.command(`${prefix} kill @e[type=!minecraft:player,distance=..100]`);
+    await connection.command(`${prefix} forceload remove ~-16 ~-16 ~31 ~31`);
   } finally {
     connection.close();
   }

@@ -16,7 +16,7 @@ Usage: npm run cts -- [options]
   --port <port>      Override the target TCP port
   --version <name>   Exact Minecraft release, such as 1.21.1
   --filter <text>    Run cases whose stable ID contains this text
-  --profile <name>   all (default), protocol, or world
+  --profile <name>   all (default), live, protocol, world, or persistence
   --reports <path>   Report directory, relative to the working directory
   --list            List selected cases without connecting or loading adapters
   --strict          Return a failure if a selected case is skipped
@@ -49,11 +49,15 @@ async function main(): Promise<void> {
   if (values.version !== undefined) overrides.version = values.version;
   if (values.reports !== undefined) overrides.reports = values.reports;
   const config = await loadConfig(values.config, overrides);
-  if (!['all', 'protocol', 'world'].includes(values.profile)) throw new Error('Unknown profile; use all, protocol, or world');
+  if (!['all', 'live', 'protocol', 'world', 'persistence'].includes(values.profile)) {
+    throw new Error('Unknown profile; use all, live, protocol, world, or persistence');
+  }
   const selected = cases.filter((test) => {
     if (values.filter && !test.id.includes(values.filter)) return false;
     if (values.profile === 'protocol') return !test.requires.includes('world');
     if (values.profile === 'world') return test.requires.includes('world');
+    if (values.profile === 'live') return !test.requires.includes('restart');
+    if (values.profile === 'persistence') return test.requires.includes('restart');
     return true;
   });
   if (!selected.length) {

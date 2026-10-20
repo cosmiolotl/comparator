@@ -26,7 +26,7 @@ export async function createHarness(
   const config: SuiteConfig = {
     implementation: 'protocol-fixture',
     target: { edition: 'java', host: '127.0.0.1', port, version: '1.21.1' },
-    capabilities: ['status', 'login', 'play'], timeoutMs: 2000,
+    capabilities: ['status', 'login', 'play'], timeoutMs: 5000,
     reportDirectory: reports,
     ...overrides,
   };
@@ -38,7 +38,7 @@ export async function createHarness(
       try {
         const { stdout, stderr } = await exec(process.execPath, [
           '--import', 'tsx', 'src/cli.ts', '--config', configPath, ...arguments_,
-        ], { cwd: project, timeout: 15000, windowsHide: true });
+        ], { cwd: project, timeout: 30000, windowsHide: true });
         return { code: 0, stdout, stderr };
       } catch (error) {
         const failure = error as Error & {

@@ -1,10 +1,11 @@
-import type { ConformanceCase } from '../suite.js';
+import type { ConformanceCase, WorldPlacement } from '../suite.js';
 import type { World } from './world.js';
 
 interface Scenario {
   id: string;
   title: string;
   reference: string;
+  placement?: WorldPlacement;
   run(world: World): Promise<void>;
 }
 

@@ -95,3 +95,45 @@ fields, or floating-point decimal representations without an appropriate fixture
 For each family, document primary-source evidence and run against the pinned
 official baseline. Probe adjacent tick boundaries and deliberate fixture
 perturbations to ensure assertions detect deviations.
+
+## Player, placement, and lifecycle cases
+
+`Player` in `src/player/player.ts` combines a real protocol connection with
+RCON fixture setup. Player cases require `world`, `login`, and `play`; actions
+such as clicks, attacks, movement, and block use go through packets. Packet
+observers track relevant state, and `fence()` waits for a server-thread statistics
+reply after earlier input. Multiple players need unique names and explicit
+observation barriers. Do not assume an uncontrolled race has a particular winner.
+
+The player driver uses 20 TPS. Players and ridden entities are not frozen by
+vanilla's tick freeze, so simulation tick assertions do not automatically measure
+player input timing. Use an acknowledged action or a stable precondition, and
+document which timing property the test actually establishes.
+
+`placement` metadata can select negative coordinates, a different arena height,
+or another dimension. Arena centers are separated by 256 blocks. A dimension
+placement scopes both commands and cleanup; explicit cross-dimension commands
+must arrange their own additional cleanup.
+
+Register extra resources with `context.deferCleanup(label, async (signal) => ...)`
+before acquiring them. The runner awaits these callbacks in registration order,
+each with a fresh deadline, before normal world and adapter cleanup. Use a new
+connection bound to that signal. Separate independent cleanup phases, such as
+clearing a region and releasing its tickets, so one failure cannot skip the other.
+Do not create fresh cleanup work inside an expired test body's `finally`: the
+case deadline can return control to the runner before that work finishes.
+
+`world.expectEventually(condition)` is for asynchronous services, such as light
+propagation or connection removal. It observes a fixed expected predicate until
+the case deadline; it does not repeat setup or retry a case. Never use it to
+relax a specified game-tick deadline.
+
+Persistence cases require `world` and `restart`, plus `crashRecovery` for a process
+kill. `context.restart(mode)` releases arena tickets and waits for ticking to stop,
+flushes the save, invokes the adapter, reconnects RCON, and freezes before
+restoring arena tickets. It does not
+reinitialize the fixture. Disconnect all test players first so their tickets
+cannot keep the arena ticking. Reconnect saved players without `Player.join`,
+which intentionally clears ordinary fixture inventory and effects.
+Restore `tick rate 20` before opening the replacement player connection:
+vanilla's login timeout counts server ticks even while the world is frozen.

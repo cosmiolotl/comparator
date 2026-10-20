@@ -9,6 +9,7 @@ interface Options {
   malformedFrame?: boolean;
   overshootTicks?: boolean;
   stallAfterOperation?: boolean;
+  rejectSave?: boolean;
 }
 
 function frame(id: number, type: number, body: string): Buffer {
@@ -43,6 +44,9 @@ export async function startControlFixture(options: Options = {}) {
     if (command === 'data get storage comparator:harness value') return `Numeric observation: ${storedValue}`;
     const storedTime = command.match(/^execute store result score (\S+) cts run time query gametime$/);
     if (storedTime) scores.set(storedTime[1]!, gameTime);
+    if (command === 'execute store result score #actual cts run save-all flush') {
+      scores.set('#actual', options.rejectSave ? 0 : 1);
+    }
     const tickStep = command.match(/^tick step (\d+)$/);
     if (tickStep) gameTime += Number(tickStep[1]) + (options.overshootTicks ? 1 : 0);
     const scoreQuery = command.match(/^scoreboard players get (\S+) cts$/);
@@ -107,6 +111,10 @@ export async function startControlFixture(options: Options = {}) {
   return {
     port: (server.address() as AddressInfo).port,
     commands,
+    forgetSavedState(): void {
+      token = '';
+      scores.clear();
+    },
     async close() {
       const closed = once(server, 'close');
       server.close();

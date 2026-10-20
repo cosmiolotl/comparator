@@ -53,9 +53,9 @@ The server follows Login Success with the clientbound play Login packet (often
 called Join Game), assigning a signed 32-bit integer entity ID. The protocol client
 performs version-specific configuration acknowledgements when required.
 
-This establishes entry into play, not a fully spawned, playable world. Position,
-chunks, registries, movement, inventory, blocks, chat, and entity packet behavior
-need additional protocol cases. The command profile covers separate observations.
+This establishes entry into play, not a fully spawned, playable world. The
+separate player-action cases cover selected inventory, movement, block, entity,
+and dimension interactions. This basic join case makes none of those guarantees.
 
 ## Evidence and versioning
 
@@ -75,12 +75,14 @@ or partially skipped run cannot establish conformance beyond that selection.
 ## Controlled world profile
 
 The `world` capability requires Java 1.21.1 vanilla commands via RCON on the same
-instance as the configured game endpoint. It adds 508 cases covering fixed
+instance as the configured game endpoint. Gameplay cases cover fixed
 observations documented in the [coverage catalog](coverage.md) and its research
 links. The command implementation is part of this profile's observable contract.
 Adapters may arrange fixtures but must not calculate or substitute expected values.
 
-Each case receives a fresh arena at Y=160, with a stone floor at relative Y=-1.
+Each case receives a fresh arena, normally in the Overworld at Y=160, with a
+stone floor at relative Y=-1. A case may explicitly select another dimension,
+height, or negative coordinates. Arenas are separated by 256 blocks.
 The cleared region spans X/Z=-16..31 and Y=0..31. All nine chunks must report
 entity-ticking readiness before setup. The Overworld clock is frozen, tick rate
 is 1000 for efficient controlled stepping, difficulty is normal, daylight is 6000,
@@ -100,10 +102,50 @@ Expected command failures are asserted explicitly. Commands that execute no bran
 produce no stored result, not an implicit zero. Case assertions must distinguish
 absence, zero, and default-omitted NBT fields according to vanilla behavior.
 
-Cleanup closes connections, removes nearby nonplayer entities, and releases arena
-tickets. Adapter cleanup runs even when world cleanup fails, with its own deadline.
+Cleanup closes case connections, awaits registered resource cleanups, removes
+nearby nonplayer entities, and releases arena tickets. Each registered cleanup
+has a fresh deadline, and failure does not suppress later phases. Adapter cleanup
+runs even when world cleanup fails, with its own deadline.
 Suite cleanup restores a running 20 TPS clock. It does not restore the complete
 world or all administrative settings; use a dedicated disposable instance.
 
 Save/ticket-cycle checks do not prove disk eviction, restart durability, or crash
 recovery. See the precise [chunk lifecycle evidence](research-world.md#chunk-lifecycle).
+
+## Player actions
+
+Cases declaring `world`, `login`, and `play` may connect actual clients, arrange
+fixtures through RCON, and send inventory, block-use, movement, combat, or other
+gameplay packets. Expected changes are observed through server packets and world
+assertions. The shared driver acknowledges teleportation and chunk batches and
+waits for the destination chunk before interacting.
+
+Vanilla still processes players while simulation is frozen. Player fixtures use
+20 TPS and a REQUEST_STATS response to fence earlier gameplay packets on the
+server thread. A packet fence establishes processing order, not elapsed player
+ticks. Exact timing claims apply only where the case explicitly controls and
+observes them. Lighting and disconnect removal may use deadline-bounded eventual
+observations; scheduled simulation work may not.
+
+The [player research](research-player.md) defines the selected actions and their
+limits. Most other cases use commands for actions and do not certify equivalent
+player packet paths.
+
+## Persistence
+
+Cases declaring `restart` require `world` and an adapter implementing
+`restart(mode, signal)`. `crashRecovery` additionally authorizes the case to request
+process termination. Missing declared adapter support fails visibly.
+
+Before restart, the harness removes arena tickets, waits for ticking readiness to
+end, and requires a successful `save-all flush`. The adapter must stop the owned
+process and reopen the same world, accepting RCON before returning. `clean` must
+be an orderly stop; forced termination cannot count as a clean pass. `crash` kills
+the process after the flush. Unflushed writes, OS crashes, and faulty storage are
+outside this contract.
+
+The harness reconnects and verifies its saved observation token before freezing
+time and restoring arena tickets. It does not reinitialize the fixture. Tests
+assert saved values and selected pending-tick boundaries after reopening. Player
+cases disconnect, save, and reconnect with the same offline identity without
+clearing the saved inventory or position. See [persistence research](research-persistence.md).

@@ -1,11 +1,11 @@
 import { scenario } from '../../src/world/scenario.js';
 
 const gravity = [
-  { id: 'sand-landing', block: 'sand', setup: [], destination: 'sand' },
-  { id: 'anvil-facing', block: 'anvil[facing=east]', setup: [], destination: 'anvil[facing=east]' },
-  { id: 'concrete-water-contact', block: 'white_concrete_powder', setup: ['setblock ~ ~ ~ water'], destination: 'white_concrete' },
-  { id: 'concrete-lava-contact', block: 'white_concrete_powder', setup: ['setblock ~ ~ ~ lava'], destination: 'white_concrete_powder' },
-  { id: 'sand-through-water', block: 'sand', setup: ['fill ~ ~ ~ ~ ~2 ~ water'], destination: 'sand' },
+  { id: 'sand-landing', block: 'sand', height: 5, setup: [], destination: 'sand' },
+  { id: 'anvil-facing', block: 'anvil[facing=east]', height: 1, setup: [], destination: 'anvil[facing=east]' },
+  { id: 'concrete-water-contact', block: 'white_concrete_powder', height: 5, setup: ['setblock ~ ~ ~ water'], destination: 'white_concrete' },
+  { id: 'concrete-lava-contact', block: 'white_concrete_powder', height: 5, setup: ['setblock ~ ~ ~ lava'], destination: 'white_concrete_powder' },
+  { id: 'sand-through-water', block: 'sand', height: 5, setup: ['fill ~ ~ ~ ~ ~2 ~ water'], destination: 'sand' },
 ] as const;
 
 const supported = [
@@ -18,14 +18,15 @@ const supported = [
 ] as const;
 
 export const cases = [
-  ...gravity.map(({ id, block, setup, destination }) => scenario({
+  ...gravity.map(({ id, block, height, setup, destination }) => scenario({
     id: `java.world.gravity.${id}`, title: `${block} resolves gravity with ${id} behavior`,
     reference: 'docs/research-world.md#blocks',
     async run(world) {
-      await world.command(...setup, `setblock ~ ~5 ~ ${block}`);
+      // A one-block anvil fall causes no landing damage or random anvil wear.
+      await world.command(...setup, `setblock ~ ~${height} ~ ${block}`);
       await world.step(30);
       await world.expect(`if block ~ ~ ~ ${destination}`);
-      await world.expect('if block ~ ~5 ~ air');
+      await world.expect(`if block ~ ~${height} ~ air`);
     },
   })),
   scenario({

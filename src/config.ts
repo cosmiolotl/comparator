@@ -2,7 +2,7 @@ import { readFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import minecraftData from 'minecraft-data';
 
-export const capabilities = ['status', 'login', 'play', 'world'] as const;
+export const capabilities = ['status', 'login', 'play', 'world', 'restart', 'crashRecovery'] as const;
 export type Capability = (typeof capabilities)[number];
 
 export interface Target {
@@ -78,6 +78,12 @@ export async function loadConfig(
   if (new Set(declared).size !== declared.length) throw new Error('Duplicate capabilities');
   if (declared.includes('play') && !declared.includes('login')) {
     throw new Error('The play capability requires login');
+  }
+  if (declared.includes('restart') && !declared.includes('world')) {
+    throw new Error('The restart capability requires world');
+  }
+  if (declared.includes('crashRecovery') && !declared.includes('restart')) {
+    throw new Error('The crashRecovery capability requires restart');
   }
   const configDirectory = dirname(resolve(filename));
   const result: SuiteConfig = {

@@ -9,9 +9,10 @@ export class World {
   private assertionCount = 0;
 
   constructor(
-    private readonly connection: Rcon,
+    private connection: Rcon,
     readonly origin: { x: number; y: number; z: number },
     private readonly signal: AbortSignal,
+    readonly dimension = 'minecraft:overworld',
   ) {}
 
   async raw(command: string): Promise<string> {
@@ -20,7 +21,7 @@ export class World {
     this.trace.push(command);
     if (this.trace.length > 80) this.trace.shift();
     const response = await this.connection.command(
-      `execute in minecraft:overworld positioned ${x}.0 ${y}.0 ${z}.0 run ${command}`,
+      `execute in ${this.dimension} positioned ${x}.0 ${y}.0 ${z}.0 run ${command}`,
     );
     assert.ok(!response.includes('<--[HERE]'), `Invalid fixture command: ${command}\n${response}`);
     return response;
@@ -35,6 +36,16 @@ export class World {
     const response = await this.raw(`execute ${condition} run data get storage comparator:harness token`);
     assert.ok(response.includes(this.token), `${message}\nObservation: ${response}`);
     this.assertionCount++;
+  }
+
+  async expectEventually(condition: string): Promise<void> {
+    assert.match(condition, /^(if|unless) /, 'Use an execute if/unless condition');
+    // For asynchronous services such as lighting, never for simulation tick deadlines.
+    while (true) {
+      const response = await this.raw(`execute ${condition} run data get storage comparator:harness token`);
+      if (response.includes(this.token)) { this.assertionCount++; return; }
+      await delay(10, undefined, { signal: this.signal });
+    }
   }
 
   async result(command: string, expected: number): Promise<void> {
@@ -106,9 +117,25 @@ export class World {
   }
 
   async cycleChunkTickets(): Promise<void> {
-    await this.command('save-all flush', 'forceload remove ~-16 ~-16 ~31 ~31');
+    await this.result('save-all flush', 1);
+    await this.command('forceload remove ~-16 ~-16 ~31 ~31');
     await this.waitForLoad(false);
     await this.command('forceload add ~-16 ~-16 ~31 ~31');
+    await this.waitForLoad(true);
+  }
+
+  async suspendForRestart(): Promise<void> {
+    await this.command('forceload remove ~-16 ~-16 ~31 ~31');
+    await this.waitForLoad(false);
+    await this.result('save-all flush', 1);
+    this.connection.close();
+  }
+
+  async resumeAfterRestart(connection: Rcon): Promise<void> {
+    this.connection = connection;
+    await this.expect('if data storage comparator:harness token', 'The saved observation token must survive restart');
+    // Freeze before loading the remote arena: startup ticks must not consume its pending work.
+    await this.command('tick freeze', 'tick rate 1000', 'forceload add ~-16 ~-16 ~31 ~31');
     await this.waitForLoad(true);
   }
 

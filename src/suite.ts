@@ -8,6 +8,15 @@ export interface CaseContext {
   signal: AbortSignal;
   username: string;
   world?: World;
+  /** Runs after case connections close, in registration order, with an independent deadline. */
+  deferCleanup(label: string, cleanup: (signal: AbortSignal) => Promise<void>): void;
+  restart?(mode?: 'clean' | 'crash'): Promise<void>;
+}
+
+export interface WorldPlacement {
+  negative?: boolean;
+  height?: number;
+  dimension?: 'minecraft:overworld' | 'minecraft:the_nether' | 'minecraft:the_end';
 }
 
 export interface ConformanceCase {
@@ -16,6 +25,7 @@ export interface ConformanceCase {
   requires: readonly Capability[];
   reference: string;
   versions?: readonly string[];
+  placement?: WorldPlacement;
   run(context: CaseContext): Promise<void>;
 }
 

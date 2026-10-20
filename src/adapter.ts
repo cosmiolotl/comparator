@@ -8,6 +8,7 @@ export interface ServerAdapter {
   beforeEach?(caseId: string, signal: AbortSignal): Promise<void>;
   afterEach?(caseId: string, signal: AbortSignal): Promise<void>;
   teardown?(signal: AbortSignal): Promise<void>;
+  restart?(mode: 'clean' | 'crash', signal: AbortSignal): Promise<void>;
 }
 
 export async function loadAdapter(filename?: string): Promise<ServerAdapter> {
@@ -17,7 +18,7 @@ export async function loadAdapter(filename?: string): Promise<ServerAdapter> {
   if (typeof adapter.name !== 'string' || !adapter.name.trim()) {
     throw new Error('An adapter must have a nonempty name');
   }
-  for (const hook of ['setup', 'beforeEach', 'afterEach', 'teardown']) {
+  for (const hook of ['setup', 'beforeEach', 'afterEach', 'teardown', 'restart']) {
     if (adapter[hook] !== undefined && typeof adapter[hook] !== 'function') {
       throw new Error(`Adapter ${hook} must be a function`);
     }

@@ -2,7 +2,7 @@
 
 Comparator is a test suite written to check conformance of Minecraft Java Edition Servers.
 
-The full suite contains **512 cases** covering most basic mechanics and block interactions. This project is currently in alpha; see [coverage and limits](docs/coverage.md).
+The suite checks protocol behavior, player actions, mechanics and their interactions, and persistence across server restarts. This project is currently in alpha; see the [coverage catalog and limits](docs/coverage.md).
 
 Comparator currently supports the following Minecraft versions: **1.21.1\***
 
@@ -34,12 +34,25 @@ rcon.port=25575
 rcon.password=your-test-password
 ```
 
-Edit `comparator.config.json` to set the target details or begin the test using the CLI:
+Copy `comparator.config.json` to your configuration file and modify it to set the target details, then begin the test using the CLI:
+
+```powershell
+$env:COMPARATOR_RCON_PASSWORD = 'your-test-password'
+npm run cts -- --config implementors/vanilla-world.json --profile live --strict
+```
+
+For the Java 1.21.1 baseline, with Java 21 or newer on
+`PATH` or set to `COMPARATOR_JAVA`:
 
 ```sh
-$env:COMPARATOR_RCON_PASSWORD = 'your-test-password' # optional
-npm run cts -- --config path/to/your/config.json --strict
+npm run check
+npm run test:vanilla -- --accept-eula --repeat 2
 ```
+
+Pass `--accept-eula` only after agreeing to the Minecraft EULA.
+
+An alternative server can implement the optional adapter `restart(mode, signal)`
+hook and declare `restart` and `crashRecovery`. See [implementor integration](docs/implementors.md).
 
 ## Exit codes
 

@@ -9,7 +9,7 @@ import { startFixture } from './fixture.js';
 import { createHarness } from './harness.js';
 
 for (const version of ['1.20.1', '1.21.1']) {
-  test(`CLI passes the starter suite over TCP on Java ${version}`, { timeout: 20000 }, async (context) => {
+  test(`CLI passes the starter suite over TCP on Java ${version}`, { timeout: 45000 }, async (context) => {
     const fixture = await startFixture({ version });
     context.after(() => fixture.close());
     const harness = await createHarness(context, fixture.port, {

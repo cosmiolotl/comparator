@@ -47,6 +47,14 @@ falling, landing, support removal, item conversion at a torch, water hardening,
 non-hardening lava contact, and connection recomputation. Fixtures explicitly
 provide floors and attachment surfaces; random ticks are disabled.
 
+The anvil-facing case falls one block. Official `FallingBlockEntity.causeFallDamage`
+(`cjg.a(float,float,DamageSource)` in the pinned artifact) derives damage from
+`ceil(fallDistance - 1)` and only samples random anvil wear when that damage is
+positive. A five-block fall can therefore produce a chipped anvil even with random
+ticks disabled. The one-block fixture keeps an exact undamaged-state assertion
+while isolating facing preservation. `AnvilBlock.damage` (`dey.e(BlockState)`)
+also preserves facing when advancing the damage state.
+
 ## Fluids
 
 `WaterFluid`, `LavaFluid`, `FlowingFluid`, `SpongeBlock`, and `BubbleColumnBlock`
